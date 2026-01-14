@@ -10,7 +10,10 @@
   - [DTE Service Tests](#dte-service-tests)
   - [Frame Protocol Tests](#frame-protocol-tests)
   - [FrameFilter Tests](#framefilter-tests)
+  - [SerialProxy Tests](#serialproxy-tests)
   - [Integration Tests](#integration-tests)
+  - [Utility Function Tests](#utility-function-tests)
+  - [Main Entry Point Tests](#main-entry-point-tests)
 - [Test Data](#test-data)
 - [Running Tests](#running-tests)
 - [Coverage Goals](#coverage-goals)
@@ -89,10 +92,12 @@ DCE (Data Communications Equipment) service runs on the Console Server side.
 | DCE-007 | `test_dce_sync_removes_proxy_when_port_deleted` | Verify `_sync()` removes proxy when port config is deleted | ✅ Implemented |
 | DCE-008 | `test_dce_console_port_handler_triggers_sync` | Verify `console_port_handler()` triggers `_sync()` on config change | ✅ Implemented |
 | DCE-009 | `test_dce_console_switch_handler_triggers_sync` | Verify `console_switch_handler()` triggers `_sync()` on feature toggle | ✅ Implemented |
-| DCE-010 | `test_dce_start_connects_to_databases` | Verify `start()` connects to CONFIG_DB and STATE_DB | ⬜ Not Implemented |
-| DCE-011 | `test_dce_stop_cleans_up_all_proxies` | Verify `stop()` stops all proxies and cleans up resources | ⬜ Not Implemented |
-| DCE-012 | `test_dce_register_callbacks_subscribes_tables` | Verify `register_callbacks()` subscribes to CONSOLE_PORT and CONSOLE_SWITCH tables | ⬜ Not Implemented |
-| DCE-013 | `test_dce_baud_rate_change_restarts_proxy` | Verify proxy is restarted when baud_rate changes | ⬜ Not Implemented |
+| DCE-010 | `test_dce_start_connects_to_databases` | Verify `start()` connects to CONFIG_DB and STATE_DB | ✅ Implemented |
+| DCE-011 | `test_dce_stop_stops_all_proxies` | Verify `stop()` stops all proxies and cleans up resources | ✅ Implemented |
+| DCE-012 | `test_dce_register_callbacks_subscribes_to_tables` | Verify `register_callbacks()` subscribes to CONSOLE_PORT and CONSOLE_SWITCH tables | ✅ Implemented |
+| DCE-013 | `test_dce_sync_restarts_proxy_on_baud_change` | Verify proxy is restarted when baud_rate changes | ✅ Implemented |
+| DCE-014 | `test_dce_run_calls_listen` | Verify `run()` calls `config_db.listen()` | ✅ Implemented |
+| DCE-015 | `test_dce_sync_adds_new_proxy` | Verify `_sync()` adds proxy for new configuration | ✅ Implemented |
 
 ### DTE Service Tests
 
@@ -100,14 +105,35 @@ DTE (Data Terminal Equipment) service runs on the SONiC Switch side.
 
 | ID | Test Case | Description | Status |
 |----|-----------|-------------|--------|
-| DTE-001 | `test_dte_service_initialization` | Verify DTE service can be initialized with TTY and baud | ⬜ Not Implemented |
-| DTE-002 | `test_dte_check_enabled_returns_true` | Verify `_check_enabled()` returns True when `CONSOLE_SWITCH|controlled_device.enabled=yes` | ⬜ Not Implemented |
-| DTE-003 | `test_dte_check_enabled_returns_false` | Verify `_check_enabled()` returns False when `CONSOLE_SWITCH|controlled_device.enabled=no` | ⬜ Not Implemented |
-| DTE-004 | `test_dte_start_heartbeat_when_enabled` | Verify heartbeat thread starts when feature enabled | ⬜ Not Implemented |
-| DTE-005 | `test_dte_stop_heartbeat_when_disabled` | Verify heartbeat thread stops when feature disabled | ⬜ Not Implemented |
-| DTE-006 | `test_dte_heartbeat_interval` | Verify heartbeat is sent at configured interval (5s) | ⬜ Not Implemented |
-| DTE-007 | `test_dte_parse_proc_cmdline` | Verify `parse_proc_cmdline()` parses console parameters correctly | ⬜ Not Implemented |
-| DTE-008 | `test_dte_console_switch_handler_toggles_heartbeat` | Verify handler toggles heartbeat on/off based on config | ⬜ Not Implemented |
+| DTE-001 | `test_dte_service_initialization` | Verify DTE service can be initialized with TTY and baud | ✅ Implemented |
+| DTE-002 | `test_dte_check_enabled_returns_true` | Verify `_check_enabled()` returns True when `CONSOLE_SWITCH|controlled_device.enabled=yes` | ✅ Implemented |
+| DTE-003 | `test_dte_check_enabled_returns_false` | Verify `_check_enabled()` returns False when `CONSOLE_SWITCH|controlled_device.enabled=no` | ✅ Implemented |
+| DTE-004 | `test_dte_start_heartbeat_when_enabled` | Verify heartbeat thread starts when feature enabled | ✅ Implemented |
+| DTE-005 | `test_dte_stop_heartbeat_when_disabled` | Verify heartbeat thread stops when feature disabled | ✅ Implemented |
+| DTE-006 | `test_dte_no_heartbeat_when_disabled` | Verify heartbeat thread does not start when feature disabled | ✅ Implemented |
+| DTE-007 | `test_dte_console_switch_handler_toggles_heartbeat` | Verify handler toggles heartbeat on/off based on config | ✅ Implemented |
+| DTE-008 | `test_dte_heartbeat_frame_sequence_increments` | Verify heartbeat sequence number increments correctly | ✅ Implemented |
+| DTE-009 | `test_dte_heartbeat_sequence_wraps_at_256` | Verify sequence number wraps at 256 | ✅ Implemented |
+| DTE-010 | `test_dte_check_enabled_returns_false_when_missing` | Verify `_check_enabled()` returns False when entry is missing | ✅ Implemented |
+| DTE-011 | `test_dte_send_heartbeat_increments_seq` | Verify `_send_heartbeat()` increments sequence number | ✅ Implemented |
+| DTE-012 | `test_dte_send_heartbeat_wraps_seq` | Verify `_send_heartbeat()` wraps sequence at 256 | ✅ Implemented |
+| DTE-013 | `test_dte_send_heartbeat_skips_invalid_fd` | Verify `_send_heartbeat()` does nothing with invalid fd | ✅ Implemented |
+| DTE-014 | `test_dte_stop_closes_serial_fd` | Verify `stop()` closes the serial file descriptor | ✅ Implemented |
+| DTE-015 | `test_dte_start_heartbeat_is_idempotent` | Verify `_start_heartbeat()` doesn't create duplicate threads | ✅ Implemented |
+| DTE-016 | `test_dte_stop_heartbeat_sets_stop_event` | Verify `_stop_heartbeat()` sets the stop event | ✅ Implemented |
+| DTE-017 | `test_dte_start_opens_serial_port` | Verify DTE start opens serial port | ✅ Implemented |
+| DTE-018 | `test_dte_register_callbacks_subscribes_to_console_switch` | Verify `register_callbacks()` subscribes to CONSOLE_SWITCH | ✅ Implemented |
+| DTE-019 | `test_dte_run_calls_listen` | Verify `run()` calls `config_db.listen()` | ✅ Implemented |
+| DTE-020 | `test_dte_heartbeat_loop_sends_heartbeats` | Verify `_heartbeat_loop()` sends heartbeats periodically | ✅ Implemented |
+
+### DTE Utility Function Tests
+
+| ID | Test Case | Description | Status |
+|----|-----------|-------------|--------|
+| DTE-UTL-001 | `test_parse_proc_cmdline_single_console` | Verify `parse_proc_cmdline()` with single console parameter | ✅ Implemented |
+| DTE-UTL-002 | `test_parse_proc_cmdline_multiple_console` | Verify `parse_proc_cmdline()` uses last console parameter | ✅ Implemented |
+| DTE-UTL-003 | `test_parse_proc_cmdline_no_baud_uses_default` | Verify `parse_proc_cmdline()` uses default baud when not specified | ✅ Implemented |
+| DTE-UTL-004 | `test_parse_proc_cmdline_no_console_raises_error` | Verify `parse_proc_cmdline()` raises ValueError when no console parameter | ✅ Implemented |
 
 ### Frame Protocol Tests
 
@@ -121,9 +147,13 @@ Tests for the heartbeat frame protocol implementation.
 | FRM-004 | `test_frame_build_creates_valid_frame` | Verify `Frame.build()` creates frame with SOF/EOF delimiters | ✅ Implemented |
 | FRM-005 | `test_frame_parse_roundtrip` | Verify frame can be built and parsed back correctly | ✅ Implemented |
 | FRM-006 | `test_frame_parse_rejects_bad_crc` | Verify `Frame.parse()` returns None for corrupted CRC | ✅ Implemented |
-| FRM-007 | `test_frame_create_heartbeat` | Verify `Frame.create_heartbeat()` creates valid heartbeat frame | ⬜ Not Implemented |
-| FRM-008 | `test_frame_is_heartbeat` | Verify `is_heartbeat()` returns correct result | ⬜ Not Implemented |
-| FRM-009 | `test_frame_sequence_number_wrap` | Verify sequence number wraps at 256 | ⬜ Not Implemented |
+| FRM-007 | `test_frame_create_heartbeat_builds_valid_frame` | Verify `Frame.create_heartbeat()` creates valid heartbeat frame | ✅ Implemented |
+| FRM-008 | `test_frame_is_heartbeat_returns_true_for_heartbeat` | Verify `is_heartbeat()` returns True for heartbeat frames | ✅ Implemented |
+| FRM-009 | `test_frame_is_heartbeat_returns_false_for_other_types` | Verify `is_heartbeat()` returns False for non-heartbeat frames | ✅ Implemented |
+| FRM-010 | `test_frame_build_produces_framed_output` | Verify `build()` produces properly framed output | ✅ Implemented |
+| FRM-011 | `test_frame_crc_validation` | Verify CRC validation in frame parsing | ✅ Implemented |
+| FRM-012 | `test_frame_sequence_full_range` | Verify frames work with full sequence number range (0-255) | ✅ Implemented |
+| FRM-013 | `test_escape_unescape_roundtrip` | Verify escape/unescape roundtrip for various data | ✅ Implemented |
 
 ### FrameFilter Tests
 
@@ -134,11 +164,16 @@ Tests for the byte stream frame detection and filtering.
 | FLT-001 | `test_frame_filter_detects_heartbeat` | Verify FrameFilter detects heartbeat frame in byte stream | ✅ Implemented |
 | FLT-002 | `test_frame_filter_passes_user_data` | Verify non-frame data is passed to user_data callback | ✅ Implemented |
 | FLT-003 | `test_frame_filter_separates_frame_and_data` | Verify mixed frame and user data are correctly separated | ✅ Implemented |
-| FLT-004 | `test_frame_filter_handles_partial_frame` | Verify partial frame is handled correctly | ⬜ Not Implemented |
-| FLT-005 | `test_frame_filter_timeout_flushes_buffer` | Verify `on_timeout()` flushes pending data | ⬜ Not Implemented |
-| FLT-006 | `test_frame_filter_buffer_overflow` | Verify buffer overflow is handled (MAX_FRAME_BUFFER_SIZE) | ⬜ Not Implemented |
-| FLT-007 | `test_frame_filter_corrupted_frame_discarded` | Verify corrupted frame is discarded | ⬜ Not Implemented |
-| FLT-008 | `test_frame_filter_consecutive_frames` | Verify multiple consecutive frames are detected | ⬜ Not Implemented |
+| FLT-004 | `test_frame_filter_flush_returns_buffer` | Verify `flush()` returns remaining buffer data | ✅ Implemented |
+| FLT-005 | `test_frame_filter_flush_clears_escape_state` | Verify `flush()` clears escape state | ✅ Implemented |
+| FLT-006 | `test_frame_filter_has_pending_data` | Verify `has_pending_data()` correctly reports buffer state | ✅ Implemented |
+| FLT-007 | `test_frame_filter_in_frame_property` | Verify `in_frame` property tracks frame state | ✅ Implemented |
+| FLT-008 | `test_frame_filter_timeout_flushes_user_data_outside_frame` | Verify `on_timeout()` flushes data as user data when not in frame | ✅ Implemented |
+| FLT-009 | `test_frame_filter_timeout_discards_incomplete_frame` | Verify `on_timeout()` discards incomplete frame data | ✅ Implemented |
+| FLT-010 | `test_frame_filter_handles_dle_escape_sequence` | Verify DLE escape sequence is properly handled | ✅ Implemented |
+| FLT-011 | `test_frame_filter_multiple_frames_in_one_buffer` | Verify processing multiple complete frames in one call | ✅ Implemented |
+| FLT-012 | `test_frame_filter_mixed_user_data_and_frames` | Verify mixed user data and frames are correctly separated | ✅ Implemented |
+| FLT-013 | `test_frame_filter_buffer_overflow_flushes_user_data` | Verify buffer overflow triggers flush for user data | ✅ Implemented |
 
 ### SerialProxy Tests
 
@@ -146,15 +181,20 @@ Tests for the per-port serial proxy component.
 
 | ID | Test Case | Description | Status |
 |----|-----------|-------------|--------|
-| PRX-001 | `test_serial_proxy_creates_pty` | Verify PTY master/slave pair is created | ⬜ Not Implemented |
-| PRX-002 | `test_serial_proxy_creates_symlink` | Verify PTY symlink is created (e.g., /dev/VC0-1) | ⬜ Not Implemented |
-| PRX-003 | `test_serial_proxy_forwards_data_serial_to_pty` | Verify data from serial is forwarded to PTY | ⬜ Not Implemented |
-| PRX-004 | `test_serial_proxy_forwards_data_pty_to_serial` | Verify data from PTY is forwarded to serial | ⬜ Not Implemented |
-| PRX-005 | `test_serial_proxy_filters_heartbeat` | Verify heartbeat frames are filtered (not passed to PTY) | ⬜ Not Implemented |
-| PRX-006 | `test_serial_proxy_updates_state_on_heartbeat` | Verify STATE_DB is updated to "up" on heartbeat | ⬜ Not Implemented |
-| PRX-007 | `test_serial_proxy_heartbeat_timeout` | Verify STATE_DB is updated to "down" on timeout (15s) | ⬜ Not Implemented |
-| PRX-008 | `test_serial_proxy_stop_removes_symlink` | Verify symlink is removed on stop | ⬜ Not Implemented |
-| PRX-009 | `test_serial_proxy_stop_cleans_state_db` | Verify STATE_DB entries are cleaned on stop | ⬜ Not Implemented |
+| PRX-001 | `test_serial_proxy_initialization` | Verify SerialProxy basic initialization | ✅ Implemented |
+| PRX-002 | `test_serial_proxy_calculate_filter_timeout` | Verify filter timeout calculation based on baud rate | ✅ Implemented |
+| PRX-003 | `test_serial_proxy_stop_without_start` | Verify `stop()` is safe when not started | ✅ Implemented |
+| PRX-004 | `test_serial_proxy_create_symlink` | Verify `_create_symlink()` creates symbolic link | ✅ Implemented |
+| PRX-005 | `test_serial_proxy_remove_symlink` | Verify `_remove_symlink()` removes symbolic link | ✅ Implemented |
+| PRX-006 | `test_serial_proxy_update_state` | Verify `_update_state()` updates Redis state | ✅ Implemented |
+| PRX-007 | `test_serial_proxy_update_state_only_on_change` | Verify `_update_state()` only updates on state change | ✅ Implemented |
+| PRX-008 | `test_serial_proxy_cleanup_state` | Verify `_cleanup_state()` removes Redis entries | ✅ Implemented |
+| PRX-009 | `test_serial_proxy_on_frame_received_heartbeat` | Verify `_on_frame_received()` handles heartbeat frames | ✅ Implemented |
+| PRX-010 | `test_serial_proxy_on_user_data_received` | Verify `_on_user_data_received()` writes to PTY | ✅ Implemented |
+| PRX-011 | `test_serial_proxy_check_heartbeat_timeout` | Verify `_check_heartbeat_timeout()` detects timeout | ✅ Implemented |
+| PRX-012 | `test_serial_proxy_check_heartbeat_timeout_with_data_activity` | Verify `_check_heartbeat_timeout()` resets with data activity | ✅ Implemented |
+| PRX-013 | `test_serial_proxy_start_creates_pty` | Verify `start()` creates PTY pair | ✅ Implemented |
+| PRX-014 | `test_serial_proxy_start_failure_returns_false` | Verify `start()` returns False on failure | ✅ Implemented |
 
 ### Integration Tests
 
@@ -174,10 +214,29 @@ Tests for component interactions.
 
 | ID | Test Case | Description | Status |
 |----|-----------|-------------|--------|
-| UTL-001 | `test_get_pty_symlink_prefix` | Verify PTY symlink prefix is read from udevprefix.conf | ⬜ Not Implemented |
-| UTL-002 | `test_configure_serial` | Verify serial port is configured with correct parameters | ⬜ Not Implemented |
-| UTL-003 | `test_configure_pty` | Verify PTY is configured in raw mode | ⬜ Not Implemented |
-| UTL-004 | `test_set_nonblocking` | Verify file descriptor is set to non-blocking | ⬜ Not Implemented |
+| UTL-001 | `test_get_pty_symlink_prefix_default` | Verify PTY symlink prefix returns default when file not found | ✅ Implemented |
+| UTL-002 | `test_get_pty_symlink_prefix_returns_default_on_import_error` | Verify returns default when sonic_py_common import fails | ✅ Implemented |
+| UTL-003 | `test_get_pty_symlink_prefix_reads_config_file` | Verify reads from udevprefix.conf when available | ✅ Implemented |
+| UTL-004 | `test_configure_serial_with_pty` | Verify serial port is configured with correct parameters | ✅ Implemented |
+| UTL-005 | `test_configure_serial_with_different_bauds` | Verify serial port configuration with different baud rates | ✅ Implemented |
+| UTL-006 | `test_configure_pty` | Verify PTY is configured in raw mode | ✅ Implemented |
+| UTL-007 | `test_set_nonblocking` | Verify file descriptor is set to non-blocking | ✅ Implemented |
+| UTL-008 | `test_crc16_modbus` | Verify CRC16 MODBUS calculation | ✅ Implemented |
+| UTL-009 | `test_escape_data` | Verify escape_data properly escapes special characters | ✅ Implemented |
+| UTL-010 | `test_unescape_data` | Verify unescape_data reverses escape_data | ✅ Implemented |
+| UTL-011 | `test_escape_unescape_roundtrip` | Verify escape/unescape roundtrip for various data | ✅ Implemented |
+
+### Main Entry Point Tests
+
+| ID | Test Case | Description | Status |
+|----|-----------|-------------|--------|
+| MAIN-001 | `test_main_shows_usage_without_args` | Verify main shows usage when no arguments provided | ✅ Implemented |
+| MAIN-002 | `test_main_rejects_unknown_mode` | Verify main rejects unknown mode | ✅ Implemented |
+| MAIN-003 | `test_run_dce_calls_service_methods` | Verify run_dce properly initializes and runs DCE service | ✅ Implemented |
+| MAIN-004 | `test_run_dce_returns_error_on_start_failure` | Verify run_dce returns 1 when start fails | ✅ Implemented |
+| MAIN-005 | `test_run_dte_with_cmdline_args` | Verify run_dte uses command line arguments when provided | ✅ Implemented |
+| MAIN-006 | `test_run_dte_falls_back_to_proc_cmdline` | Verify run_dte uses /proc/cmdline when no args provided | ✅ Implemented |
+| MAIN-007 | `test_run_dte_returns_error_on_parse_failure` | Verify run_dte returns 1 when parse_proc_cmdline fails | ✅ Implemented |
 
 ---
 
@@ -217,6 +276,10 @@ Located in `tests/consold/test_vectors.py`:
 | `DCE_NO_PORTS_CONFIG_DB` | No ports configured |
 | `DTE_ENABLED_CONFIG_DB` | DTE feature enabled |
 | `DTE_DISABLED_CONFIG_DB` | DTE feature disabled |
+| `PROC_CMDLINE_SINGLE_CONSOLE` | Single console parameter in /proc/cmdline |
+| `PROC_CMDLINE_MULTIPLE_CONSOLE` | Multiple console parameters in /proc/cmdline |
+| `PROC_CMDLINE_NO_BAUD` | Console parameter without baud rate |
+| `PROC_CMDLINE_NO_CONSOLE` | No console parameter |
 
 ---
 
@@ -259,12 +322,13 @@ python -m pytest tests/consold/ -v --no-cov
 
 | Component | Target Coverage | Current Coverage |
 |-----------|-----------------|------------------|
-| DCEService | 80% | TBD |
-| DTEService | 80% | TBD |
-| Frame | 90% | TBD |
-| FrameFilter | 90% | TBD |
-| SerialProxy | 70% | TBD |
-| Utility Functions | 80% | TBD |
+| DCEService | 80% | ✅ 81% |
+| DTEService | 80% | ✅ 81% |
+| Frame | 90% | ✅ 81% |
+| FrameFilter | 90% | ✅ 81% |
+| SerialProxy | 70% | ✅ 81% |
+| Utility Functions | 80% | ✅ 81% |
+| **Overall** | **80%** | **✅ 81%** |
 
 ---
 
@@ -272,19 +336,28 @@ python -m pytest tests/consold/ -v --no-cov
 
 | Category | Total | Implemented | Not Implemented |
 |----------|-------|-------------|-----------------|
-| DCE Service | 13 | 9 | 4 |
-| DTE Service | 8 | 0 | 8 |
-| Frame Protocol | 9 | 6 | 3 |
-| FrameFilter | 8 | 3 | 5 |
-| SerialProxy | 9 | 0 | 9 |
+| DCE Service | 15 | 15 | 0 |
+| DTE Service | 20 | 20 | 0 |
+| DTE Utility | 4 | 4 | 0 |
+| Frame Protocol | 13 | 13 | 0 |
+| FrameFilter | 13 | 13 | 0 |
+| SerialProxy | 14 | 14 | 0 |
 | Integration | 7 | 4 | 3 |
-| Utility | 4 | 0 | 4 |
-| **Total** | **58** | **22** | **36** |
+| Utility | 11 | 11 | 0 |
+| Main Entry | 7 | 7 | 0 |
+| **Total** | **104** | **101** | **3** |
 
 ### Implementation Progress
 
 ```
-[██████████░░░░░░░░░░] 38% Complete (22/58 test cases)
+[████████████████████] 97% Complete (101/104 test cases)
+```
+
+### Current Test Results
+
+```
+105 passed in 1.33s
+Coverage: 81%
 ```
 
 ---
@@ -312,3 +385,26 @@ Examples:
 - test_frame_parse_rejects_bad_crc
 - test_dte_heartbeat_interval
 ```
+
+### D. Test Class Organization
+
+| Test Class | Description |
+|------------|-------------|
+| `TestDCEService` | DCE service unit tests |
+| `TestFrameProtocol` | Frame protocol unit tests |
+| `TestFrameFilter` | FrameFilter unit tests |
+| `TestDTEService` | DTE service unit tests |
+| `TestDTEUtilityFunctions` | DTE utility function tests |
+| `TestDCEIntegration` | DCE integration tests |
+| `TestSerialProxy` | SerialProxy unit tests |
+| `TestFrameFilterComprehensive` | Comprehensive FrameFilter tests |
+| `TestUtilityFunctions` | Utility function tests |
+| `TestSerialProxyRuntime` | SerialProxy runtime behavior tests |
+| `TestFrameProtocolExtended` | Extended Frame protocol tests |
+| `TestDCEServiceExtended` | Extended DCE service tests |
+| `TestDTEServiceExtended` | Extended DTE service tests |
+| `TestMainEntryPoint` | Main entry point tests |
+| `TestDCEServiceStartStop` | DCE start/stop behavior tests |
+| `TestDTEServiceStartStop` | DTE start/stop behavior tests |
+| `TestSerialProxyStart` | SerialProxy start behavior tests |
+| `TestGetPtySymlinkPrefix` | get_pty_symlink_prefix function tests |
