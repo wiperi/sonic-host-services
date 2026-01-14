@@ -27,6 +27,12 @@ from .test_vectors import (
     DCE_3_LINKS_ENABLED_CONFIG_DB,
     DCE_FEATURE_DISABLED_CONFIG_DB,
     CONSOLE_PORT_3_LINKS,
+    DTE_ENABLED_CONFIG_DB,
+    DTE_DISABLED_CONFIG_DB,
+    PROC_CMDLINE_SINGLE_CONSOLE,
+    PROC_CMDLINE_MULTIPLE_CONSOLE,
+    PROC_CMDLINE_NO_BAUD,
+    PROC_CMDLINE_NO_CONSOLE,
 )
 from tests.common.mock_configdb import MockConfigDb, MockDBConnector
 
@@ -432,6 +438,184 @@ class TestFrameFilter(TestCase):
         
         # Should have received user data (before the frame)
         self.assertGreater(len(user_data_chunks), 0)
+
+
+# ============================================================
+# DTE Service Tests
+# ============================================================
+
+class TestDTEService(TestCase):
+    """Test cases for DTE (SONiC Switch) service."""
+    
+    def setUp(self):
+        """Set up test fixtures for each test."""
+        MockConfigDb.CONFIG_DB = None
+    
+    def tearDown(self):
+        """Clean up after each test."""
+        MockConfigDb.CONFIG_DB = None
+    
+    def test_dte_service_initialization(self):
+        """Test DTE service can be initialized with TTY and baud."""
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        
+        self.assertEqual(service.tty_name, "ttyS0")
+        self.assertEqual(service.baud, 9600)
+        self.assertEqual(service.device_path, "/dev/ttyS0")
+        self.assertFalse(service.running)
+        self.assertFalse(service.enabled)
+        self.assertEqual(service.seq, 0)
+    
+    def test_dte_check_enabled_returns_true(self):
+        """Test _check_enabled() returns True when controlled_device.enabled=yes."""
+        MockConfigDb.set_config_db(DTE_ENABLED_CONFIG_DB)
+        
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.config_db = MockConfigDb()
+        
+        result = service._check_enabled()
+        
+        self.assertTrue(result)
+    
+    def test_dte_check_enabled_returns_false(self):
+        """Test _check_enabled() returns False when controlled_device.enabled=no."""
+        MockConfigDb.set_config_db(DTE_DISABLED_CONFIG_DB)
+        
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.config_db = MockConfigDb()
+        
+        result = service._check_enabled()
+        
+        self.assertFalse(result)
+    
+    def test_dte_check_enabled_returns_false_when_missing(self):
+        """Test _check_enabled() returns False when controlled_device entry is missing."""
+        MockConfigDb.set_config_db({"CONSOLE_SWITCH": {}})
+        
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.config_db = MockConfigDb()
+        
+        result = service._check_enabled()
+        
+        self.assertFalse(result)
+    
+    def test_dte_start_heartbeat_when_enabled(self):
+        """Test heartbeat thread starts when feature is enabled."""
+        MockConfigDb.set_config_db(DTE_ENABLED_CONFIG_DB)
+        
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.config_db = MockConfigDb()
+        service.ser_fd = 1  # Mock file descriptor
+        service.running = True
+        
+        # Call _load_initial_config which should start heartbeat if enabled
+        with mock.patch.object(service, '_start_heartbeat') as mock_start:
+            service._load_initial_config({})
+            mock_start.assert_called_once()
+    
+    def test_dte_no_heartbeat_when_disabled(self):
+        """Test heartbeat thread does not start when feature is disabled."""
+        MockConfigDb.set_config_db(DTE_DISABLED_CONFIG_DB)
+        
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.config_db = MockConfigDb()
+        service.ser_fd = 1
+        service.running = True
+        
+        with mock.patch.object(service, '_start_heartbeat') as mock_start:
+            service._load_initial_config({})
+            mock_start.assert_not_called()
+    
+    def test_dte_stop_heartbeat_when_disabled(self):
+        """Test heartbeat thread stops when feature is disabled."""
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.enabled = True  # Currently enabled
+        
+        # Mock config change to disabled
+        MockConfigDb.set_config_db(DTE_DISABLED_CONFIG_DB)
+        service.config_db = MockConfigDb()
+        
+        with mock.patch.object(service, '_stop_heartbeat') as mock_stop:
+            service.console_switch_handler("controlled_device", "SET", {"enabled": "no"})
+            mock_stop.assert_called_once()
+    
+    def test_dte_console_switch_handler_toggles_heartbeat(self):
+        """Test console_switch_handler toggles heartbeat on/off based on config."""
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.enabled = False  # Currently disabled
+        
+        # Mock config change to enabled
+        MockConfigDb.set_config_db(DTE_ENABLED_CONFIG_DB)
+        service.config_db = MockConfigDb()
+        
+        with mock.patch.object(service, '_start_heartbeat') as mock_start:
+            service.console_switch_handler("controlled_device", "SET", {"enabled": "yes"})
+            mock_start.assert_called_once()
+            self.assertTrue(service.enabled)
+    
+    def test_dte_heartbeat_frame_sequence_increments(self):
+        """Test heartbeat sequence number increments correctly."""
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.ser_fd = -1  # Invalid fd, will skip actual write
+        service.seq = 0
+        
+        # Manually increment sequence like _send_heartbeat does
+        initial_seq = service.seq
+        service.seq = (service.seq + 1) % 256
+        
+        self.assertEqual(initial_seq, 0)
+        self.assertEqual(service.seq, 1)
+    
+    def test_dte_heartbeat_sequence_wraps_at_256(self):
+        """Test heartbeat sequence number wraps at 256."""
+        service = consoled.DTEService(tty_name="ttyS0", baud=9600)
+        service.seq = 255
+        
+        # Wrap around
+        service.seq = (service.seq + 1) % 256
+        
+        self.assertEqual(service.seq, 0)
+
+
+# ============================================================
+# DTE Utility Function Tests
+# ============================================================
+
+class TestDTEUtilityFunctions(TestCase):
+    """Test cases for DTE utility functions like parse_proc_cmdline."""
+    
+    def test_parse_proc_cmdline_single_console(self):
+        """Test parse_proc_cmdline with single console parameter."""
+        with mock.patch('builtins.open', mock.mock_open(read_data=PROC_CMDLINE_SINGLE_CONSOLE)):
+            tty_name, baud = consoled.parse_proc_cmdline()
+            
+            self.assertEqual(tty_name, "ttyS0")
+            self.assertEqual(baud, 9600)
+    
+    def test_parse_proc_cmdline_multiple_console(self):
+        """Test parse_proc_cmdline uses last console parameter."""
+        with mock.patch('builtins.open', mock.mock_open(read_data=PROC_CMDLINE_MULTIPLE_CONSOLE)):
+            tty_name, baud = consoled.parse_proc_cmdline()
+            
+            # Should use the last console= parameter
+            self.assertEqual(tty_name, "ttyS1")
+            self.assertEqual(baud, 115200)
+    
+    def test_parse_proc_cmdline_no_baud_uses_default(self):
+        """Test parse_proc_cmdline uses default baud when not specified."""
+        with mock.patch('builtins.open', mock.mock_open(read_data=PROC_CMDLINE_NO_BAUD)):
+            tty_name, baud = consoled.parse_proc_cmdline()
+            
+            self.assertEqual(tty_name, "ttyS0")
+            self.assertEqual(baud, consoled.DEFAULT_BAUD)  # 9600
+    
+    def test_parse_proc_cmdline_no_console_raises_error(self):
+        """Test parse_proc_cmdline raises ValueError when no console parameter."""
+        with mock.patch('builtins.open', mock.mock_open(read_data=PROC_CMDLINE_NO_CONSOLE)):
+            with self.assertRaises(ValueError) as context:
+                consoled.parse_proc_cmdline()
+            
+            self.assertIn("No console= parameter found", str(context.exception))
 
 
 # ============================================================

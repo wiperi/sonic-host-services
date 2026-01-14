@@ -124,3 +124,13 @@ DTE_TEST_VECTOR = [
     ("DTE_Enabled", DTE_ENABLED_CONFIG_DB, True),
     ("DTE_Disabled", DTE_DISABLED_CONFIG_DB, False),
 ]
+
+
+# ============================================================
+# /proc/cmdline test data for DTE
+# ============================================================
+
+PROC_CMDLINE_SINGLE_CONSOLE = "BOOT_IMAGE=/boot/vmlinuz console=ttyS0,9600n8"
+PROC_CMDLINE_MULTIPLE_CONSOLE = "BOOT_IMAGE=/boot/vmlinuz console=tty0 console=ttyS1,115200"
+PROC_CMDLINE_NO_BAUD = "BOOT_IMAGE=/boot/vmlinuz console=ttyS0"
+PROC_CMDLINE_NO_CONSOLE = "BOOT_IMAGE=/boot/vmlinuz root=/dev/sda1"
