@@ -17,10 +17,22 @@ import sys
 import time
 import copy
 import termios
+import importlib.util
+import importlib.machinery
 from unittest import TestCase, mock
 from parameterized import parameterized
 
-from sonic_py_common.general import load_module_from_source
+try:
+    from sonic_py_common.general import load_module_from_source
+except ImportError:
+    def load_module_from_source(module_name, source_path):
+        """Manually load a module from source file when sonic_py_common is not available."""
+        loader = importlib.machinery.SourceFileLoader(module_name, source_path)
+        spec = importlib.util.spec_from_loader(module_name, loader)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        spec.loader.exec_module(module)
+        return module
 
 from .test_vectors import (
     DCE_TEST_VECTOR,
@@ -47,11 +59,20 @@ modules_path = os.path.dirname(test_path)
 scripts_path = os.path.join(modules_path, 'scripts')
 sys.path.insert(0, modules_path)
 
+# Mock swsscommon before loading consoled module
+mock_swsscommon = mock.MagicMock()
+mock_swsscommon.swsscommon = mock.MagicMock()
+mock_swsscommon.swsscommon.DBConnector = MockDBConnector
+mock_swsscommon.swsscommon.Table = mock.MagicMock()
+mock_swsscommon.swsscommon.ConfigDBConnector = MockConfigDb
+sys.modules['swsscommon'] = mock_swsscommon
+sys.modules['swsscommon.swsscommon'] = mock_swsscommon.swsscommon
+
 # Load consoled module from scripts directory
 consoled_path = os.path.join(scripts_path, 'consoled')
 consoled = load_module_from_source('consoled', consoled_path)
 
-# Replace swsscommon classes with mocks
+# Replace swsscommon classes with mocks (redundant but kept for clarity)
 consoled.ConfigDBConnector = MockConfigDb
 consoled.DBConnector = MockDBConnector
 consoled.Table = mock.Mock()
@@ -291,6 +312,34 @@ class TestDCEService(TestCase):
             with mock.patch.object(service, '_sync') as mock_sync:
                 service.console_switch_handler("console_mgmt", "SET", {"enabled": "yes"})
                 mock_sync.assert_called_once()
+
+    def test_dce_receive_one_frame_splitted_in_two_reads(self):
+        """Test DCE service can receive a single frame split across two reads."""
+        received_frames = []
+        
+        def on_frame(frame):
+            received_frames.append(frame)
+        
+        filter = consoled.FrameFilter(on_frame=on_frame)
+        
+        # Create a heartbeat frame
+        heartbeat = consoled.Frame.create_heartbeat(seq=10)
+        frame_bytes = heartbeat.build()
+        
+        # Split the frame into two parts
+        split_index = len(frame_bytes) // 2
+        part1 = frame_bytes[:split_index]
+        part2 = frame_bytes[split_index:]
+        
+        # Process first part
+        filter.process(part1)
+        self.assertEqual(len(received_frames), 0)  # No complete frame yet
+        
+        # Process second part
+        filter.process(part2)
+        self.assertEqual(len(received_frames), 1)  # Now we should have one frame
+        self.assertTrue(received_frames[0].is_heartbeat())
+        self.assertEqual(received_frames[0].seq, 10)
 
 
 # ============================================================
@@ -1236,6 +1285,103 @@ class TestSerialProxyRuntime(TestCase):
         
         # Should not set state to "down" because of data activity
         self.assertNotEqual(proxy._current_oper_state, "down")
+    
+    def test_serial_proxy_run_loop_processes_split_frame(self):
+        """
+        Test _run_loop correctly processes a frame split across two reads.
+        
+        This test simulates a real scenario where a heartbeat frame arrives
+        in two separate chunks through the serial port.
+        """
+        import select as select_module
+        import threading
+        
+        state_table = mock.Mock()
+        frames_received = []
+        
+        # Create proxy instance
+        proxy = consoled.SerialProxy(
+            link_id="test",
+            device="/dev/test",
+            baud=9600,
+            state_table=state_table,
+            pty_symlink_prefix="/dev/VC0-"
+        )
+        
+        # Create pipes to simulate ser_fd, pty_master, and wake pipe
+        ser_r, ser_w = os.pipe()  # Simulate serial port
+        pty_master, pty_slave = os.pipe()  # Simulate PTY
+        wake_r, wake_w = os.pipe()  # Wake pipe
+        
+        try:
+            # Set up proxy with our test file descriptors
+            proxy.ser_fd = ser_r
+            proxy.pty_master = pty_master
+            proxy._wake_r = wake_r
+            proxy._wake_w = wake_w
+            proxy.running = True
+            proxy._last_heartbeat_time = time.monotonic()
+            proxy._last_data_activity = time.monotonic()
+            
+            # Set non-blocking
+            consoled.set_nonblocking(ser_r)
+            consoled.set_nonblocking(pty_master)
+            consoled.set_nonblocking(wake_r)
+            
+            # Create frame filter with callback to track received frames
+            original_on_frame = None
+            def track_frame(frame):
+                frames_received.append(frame)
+                if original_on_frame:
+                    original_on_frame(frame)
+            
+            proxy.filter = consoled.FrameFilter(
+                on_frame=track_frame,
+                on_user_data=lambda data: None,
+            )
+            
+            # Build a heartbeat frame
+            heartbeat = consoled.Frame.create_heartbeat(seq=42)
+            frame_bytes = heartbeat.build()
+            
+            # Split the frame into two parts
+            split_point = len(frame_bytes) // 2
+            part1 = frame_bytes[:split_point]
+            part2 = frame_bytes[split_point:]
+            
+            # Start the run loop in a separate thread
+            loop_thread = threading.Thread(target=proxy._run_loop, daemon=True)
+            loop_thread.start()
+            
+            # Give the loop time to start
+            time.sleep(0.05)
+            
+            # Write first part of frame to simulate serial read
+            os.write(ser_w, part1)
+            time.sleep(0.05)
+            
+            # Write second part of frame
+            os.write(ser_w, part2)
+            time.sleep(0.1)
+            
+            # Stop the loop
+            proxy.running = False
+            os.write(wake_w, b'x')  # Wake up select
+            loop_thread.join(timeout=1.0)
+            
+            # Verify that the frame was correctly parsed despite being split
+            self.assertEqual(len(frames_received), 1, 
+                f"Expected 1 frame, got {len(frames_received)}")
+            self.assertTrue(frames_received[0].is_heartbeat())
+            self.assertEqual(frames_received[0].seq, 42)
+            
+        finally:
+            # Clean up file descriptors
+            for fd in (ser_r, ser_w, pty_master, pty_slave, wake_r, wake_w):
+                try:
+                    os.close(fd)
+                except:
+                    pass
 
 
 # ============================================================

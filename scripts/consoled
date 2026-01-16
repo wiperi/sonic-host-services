@@ -154,6 +154,20 @@ def unescape_data(data: bytes) -> bytes:
     return bytes(result)
 
 
+def log_binary_data(data: bytes, label: str) -> None:
+    """
+    以二进制和可读形式输出数据到终端
+    
+    Args:
+        data: 要输出的字节数据
+        label: 数据流向标签（如 "Serial→PTY", "PTY→Serial"）
+    """ 
+    hex_str = data.hex(' ', 1)  # 每字节用空格分隔
+    # 将不可打印字符替换为 <HEX>
+    readable = ''.join(chr(b) if 32 <= b < 127 else f"<0x{b:02x}>" for b in data)
+    log.debug(f"[{label} ({len(data)} bytes):\n  HEX: {hex_str}\n  ASCII: {readable}\n")
+
+
 @dataclass
 class Frame:
     """帧数据结构"""
@@ -287,6 +301,8 @@ class FrameFilter:
     def flush(self) -> bytes:
         """刷新 buffer，返回剩余数据"""
         result = bytes(self._buffer)
+        if self._buffer:
+            log_binary_data(result, "Filter.flush")
         self._buffer.clear()
         self._escape_next = False
         self._in_frame = False
@@ -304,12 +320,17 @@ class FrameFilter:
     def _flush_as_user_data(self) -> None:
         """将 buffer 作为用户数据发送"""
         if self._buffer and self._on_user_data:
+            log_binary_data(bytes(self._buffer), "Filter→UserData")
             self._on_user_data(bytes(self._buffer))
+
         self._buffer.clear()
         self._escape_next = False
     
     def _discard_buffer(self) -> None:
         """丢弃 buffer"""
+        if self._buffer:
+            log_binary_data(bytes(self._buffer), "Filter.discard")
+
         self._buffer.clear()
         self._escape_next = False
     
@@ -327,7 +348,14 @@ class FrameFilter:
             self._escape_next = False
             return
         
-        frame = Frame.parse(bytes(self._buffer))
+        buffer_data = bytes(self._buffer)
+        frame = Frame.parse(buffer_data)
+
+        if frame is not None:
+            log_binary_data(buffer_data, "Filter→Frame(parsed)")
+        else:
+            log_binary_data(buffer_data, "Filter→Frame(invalid)")
+
         self._buffer.clear()
         self._escape_next = False
         
@@ -567,9 +595,12 @@ class SerialProxy:
                 if not self.running:
                     break
                 
+                # 如果有串口数据可读，处理数据
+                serial_data_received = False
                 for fd in readable:
                     if fd == self.ser_fd:
                         self._on_serial_read()
+                        serial_data_received = True
                     elif fd == self.pty_master:
                         self._on_pty_read()
                     elif fd == self._wake_r:
@@ -582,8 +613,8 @@ class SerialProxy:
                 # 检查心跳超时
                 self._check_heartbeat_timeout()
                 
-                # 检查 filter 超时
-                if self.filter and self.filter.has_pending_data():
+                # 只有当 select 超时（没有串口数据）且有待处理数据时才触发 filter 超时
+                if not serial_data_received and self.filter and self.filter.has_pending_data():
                     self.filter.on_timeout()
                 
             except Exception as e:
@@ -1090,6 +1121,7 @@ class DTEService:
         try:
             os.write(self.ser_fd, frame_bytes)
             log.debug(f"Sent heartbeat (seq={self.seq})")
+            log_binary_data(frame_bytes, "DTE→Serial")
             self.seq = (self.seq + 1) % 256
         except Exception as e:
             log.error(f"Failed to send heartbeat: {e}")
