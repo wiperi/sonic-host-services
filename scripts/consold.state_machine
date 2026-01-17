@@ -574,22 +574,38 @@ class SerialProxy:
     
     def _run_loop(self) -> None:
         """工作线程主循环"""
-        filter_timeout = self._calculate_filter_timeout(self.baud)
+        filter_timeout_duration = self._calculate_filter_timeout(self.baud)
+        
+        # 状态机定义
+        STATE_WAITING_FOR_FILTER = "waiting_for_filter_timeout"
+        STATE_WAITING_FOR_HEARTBEAT = "waiting_for_heartbeat_timeout"
+        STATE_HEARTBEAT_TIMED_OUT = "heartbeat_timed_out"
+        
+        # 初始状态：心跳已超时（等待首次数据）
+        state = STATE_HEARTBEAT_TIMED_OUT
+        expected_filter_timeout = 0.0
+        expected_heartbeat_timeout = 0.0
         
         while self.running:
             try:
-                # 计算距离各个超时事件的剩余时间
+                # 根据当前状态计算 select timeout
                 now = time.monotonic()
-                time_since_activity = now - self._last_data_activity
+                select_timeout = None
                 
-                # Filter 超时：从上次数据到达后经过 filter_timeout
-                time_until_filter_timeout = max(0, filter_timeout - time_since_activity)
+                if state == STATE_WAITING_FOR_FILTER:
+                    # 需要同时考虑 filter 和 heartbeat 超时
+                    time_until_filter = max(0, expected_filter_timeout - now)
+                    time_until_heartbeat = max(0, expected_heartbeat_timeout - now)
+                    select_timeout = min(time_until_filter, time_until_heartbeat)
+                elif state == STATE_WAITING_FOR_HEARTBEAT:
+                    # 只考虑 heartbeat 超时
+                    select_timeout = max(0, expected_heartbeat_timeout - now)
+                else:  # STATE_HEARTBEAT_TIMED_OUT
+                    # 无限等待，直到有新数据
+                    select_timeout = None
                 
-                # 心跳超时检查：从上次数据到达后经过 HEARTBEAT_TIMEOUT
-                time_until_heartbeat_check = max(0.1, HEARTBEAT_TIMEOUT - time_since_activity)
-                
-                # Select 超时取两者较小值
-                select_timeout = min(time_until_filter_timeout, time_until_heartbeat_check)
+                # 记录状态和超时时间
+                log.debug(f"[{self.link_id}] State={state}, select_timeout={select_timeout}")
                 
                 # 使用 select 监听串口、PTY 和唤醒管道
                 readable, _, _ = select.select(
@@ -601,12 +617,18 @@ class SerialProxy:
                 if not self.running:
                     break
                 
-                # 如果有串口数据可读，处理数据
+                # 处理读事件
                 serial_data_received = False
                 for fd in readable:
                     if fd == self.ser_fd:
                         self._on_serial_read()
                         serial_data_received = True
+                        # 收到串口数据，更新超时时间戳并转换到 waiting_for_filter 状态
+                        now = time.monotonic()
+                        self._last_data_activity = now
+                        expected_filter_timeout = now + filter_timeout_duration
+                        expected_heartbeat_timeout = now + HEARTBEAT_TIMEOUT
+                        state = STATE_WAITING_FOR_FILTER
                     elif fd == self.pty_master:
                         self._on_pty_read()
                     elif fd == self._wake_r:
@@ -616,12 +638,27 @@ class SerialProxy:
                         except:
                             pass
                 
-                # 检查心跳超时
-                self._check_heartbeat_timeout()
+                # 根据当前状态检查超时事件
+                now = time.monotonic()
                 
-                # 只有当 select 超时（没有串口数据）且有待处理数据时才触发 filter 超时
-                if not serial_data_received and self.filter and self.filter.has_pending_data():
-                    self.filter.on_timeout()
+                if state == STATE_WAITING_FOR_FILTER:
+                    # 检查是否到达 filter 超时时间
+                    if now >= expected_filter_timeout and not serial_data_received:
+                        if self.filter and self.filter.has_pending_data():
+                            self.filter.on_timeout()
+                        # Filter 超时后转换到 waiting_for_heartbeat 状态
+                        state = STATE_WAITING_FOR_HEARTBEAT
+                    
+                    # 检查是否到达 heartbeat 超时时间
+                    if now >= expected_heartbeat_timeout:
+                        self._update_state("down")
+                        state = STATE_HEARTBEAT_TIMED_OUT
+                
+                elif state == STATE_WAITING_FOR_HEARTBEAT:
+                    # 检查是否到达 heartbeat 超时时间
+                    if now >= expected_heartbeat_timeout:
+                        self._update_state("down")
+                        state = STATE_HEARTBEAT_TIMED_OUT
                 
             except Exception as e:
                 if self.running:
@@ -635,7 +672,7 @@ class SerialProxy:
         try:
             data = os.read(self.ser_fd, 4096)
             if data:
-                self._last_data_activity = time.monotonic()
+                # 注意：超时时间戳的更新在 _run_loop 中处理
                 self.filter.process(data)
         except (BlockingIOError, OSError):
             pass
@@ -670,13 +707,8 @@ class SerialProxy:
     
     def _check_heartbeat_timeout(self) -> None:
         """检查链路活跃性超时（通过数据活动判断）"""
-        now = time.monotonic()
-        time_since_activity = now - self._last_data_activity
-        
-        if time_since_activity >= HEARTBEAT_TIMEOUT:
-            # 超时时间内没有任何数据活动（包括心跳），判定链路断开
-            self._update_state("down")
-            self._last_data_activity = now  # 重置以避免持续触发
+        # 注意：此方法已被状态机逻辑替代，保留用于兼容性
+        pass
     
     def _update_state(self, oper_state: str) -> None:
         """更新 Redis 状态（仅在状态变化时更新）"""
