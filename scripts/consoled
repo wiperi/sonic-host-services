@@ -289,7 +289,7 @@ class FrameFilter:
                 self._buffer.append(byte)
                 if len(self._buffer) >= MAX_FRAME_BUFFER_SIZE:
                     self._flush_buffer()
-    
+
     def on_timeout(self) -> None:
         """超时回调"""
         if not self._in_frame:
@@ -475,8 +475,7 @@ class SerialProxy:
         
         # 状态跟踪
         self._current_oper_state: Optional[str] = None
-        self._last_heartbeat_time: float = 0.0
-        self._last_data_activity: float = 0.0
+        self._last_data_activity: float = 0.0  # 任何数据活动时间（包括心跳）
         
         # 线程
         self._thread: Optional[threading.Thread] = None
@@ -516,7 +515,6 @@ class SerialProxy:
             self._create_symlink()
             
             self.running = True
-            self._last_heartbeat_time = time.monotonic()
             self._last_data_activity = time.monotonic()
             
             # 启动工作线程
@@ -580,10 +578,10 @@ class SerialProxy:
         
         while self.running:
             try:
-                # 计算距离下次心跳超时检查的时间
+                 # 计算 select 超时时间：取 filter_timeout 和心跳检查间隔的较小值
                 now = time.monotonic()
-                time_since_heartbeat = now - self._last_heartbeat_time
-                select_timeout = min(filter_timeout, max(0.1, HEARTBEAT_TIMEOUT - time_since_heartbeat))
+                time_since_activity = now - self._last_data_activity
+                select_timeout = min(filter_timeout, max(0.1, HEARTBEAT_TIMEOUT - time_since_activity))
                 
                 # 使用 select 监听串口、PTY 和唤醒管道
                 readable, _, _ = select.select(
@@ -648,7 +646,7 @@ class SerialProxy:
     def _on_frame_received(self, frame: Frame) -> None:
         """帧接收回调"""
         if frame.is_heartbeat():
-            self._last_heartbeat_time = time.monotonic()
+            # 心跳帧也是数据活动，_last_data_activity 已在 _on_serial_read 中更新
             self._update_state("up")
             log.debug(f"[{self.link_id}] Heartbeat received (seq={frame.seq})")
         else:
@@ -663,22 +661,14 @@ class SerialProxy:
                 pass
     
     def _check_heartbeat_timeout(self) -> None:
-        """检查心跳超时"""
+        """检查链路活跃性超时（通过数据活动判断）"""
         now = time.monotonic()
-        time_since_heartbeat = now - self._last_heartbeat_time
+        time_since_activity = now - self._last_data_activity
         
-        if time_since_heartbeat >= HEARTBEAT_TIMEOUT:
-            # 检查是否有数据活动
-            time_since_data = now - self._last_data_activity
-            if time_since_data < HEARTBEAT_TIMEOUT:
-                # 有数据活动，重置心跳时间继续等待
-                log.debug(f"[{self.link_id}] Heartbeat timeout but data activity detected")
-                self._last_heartbeat_time = now
-                return
-            
-            # 既没有心跳也没有数据活动
+        if time_since_activity >= HEARTBEAT_TIMEOUT:
+            # 超时时间内没有任何数据活动（包括心跳），判定链路断开
             self._update_state("down")
-            self._last_heartbeat_time = now  # 重置以避免持续触发
+            self._last_data_activity = now  # 重置以避免持续触发
     
     def _update_state(self, oper_state: str) -> None:
         """更新 Redis 状态（仅在状态变化时更新）"""
