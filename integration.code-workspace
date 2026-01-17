@@ -1,9 +1,11 @@
 {
 	"folders": [
 		{
+			"name": "sonic-host-services",
 			"path": "."
 		},
 		{
+			"name": "consoled",
 			"path": "../consoled"
 		}
 	],
