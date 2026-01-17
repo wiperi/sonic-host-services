@@ -1,1 +1,0 @@
-python -m pytest tests/featured/featured_test.py -v 2>&1
