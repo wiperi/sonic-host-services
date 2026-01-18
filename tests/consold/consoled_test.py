@@ -87,12 +87,13 @@ class MockSerialProxy:
     
     instances = []
     
-    def __init__(self, link_id, device, baud, state_table, pty_symlink_prefix):
+    def __init__(self, link_id, device, baud, pty_symlink_prefix):
         self.link_id = link_id
         self.device = device
         self.baud = baud
-        self.state_table = state_table
         self.pty_symlink_prefix = pty_symlink_prefix
+        # state_table 现在在 start() 中动态创建
+        self.state_table = None
         self.running = False
         self.started = False
         self.stopped = False
@@ -155,14 +156,12 @@ class TestDCEService(TestCase):
         
         # Mock the start to avoid actual DB connections
         with mock.patch.object(service, 'config_db', MockConfigDb()):
-            with mock.patch.object(service, 'state_db', mock.Mock()):
-                with mock.patch.object(service, 'state_table', mock.Mock()):
-                    service.config_db = MockConfigDb()
-                    service.running = True
-                    
-                    # Verify service can be created
-                    self.assertIsNotNone(service)
-                    self.assertEqual(service.proxies, {})
+            service.config_db = MockConfigDb()
+            service.running = True
+            
+            # Verify service can be created
+            self.assertIsNotNone(service)
+            self.assertEqual(service.proxies, {})
     
     def test_dce_check_feature_enabled_when_enabled(self):
         """Test _check_feature_enabled returns True when feature is enabled."""
@@ -750,13 +749,10 @@ class TestSerialProxy(TestCase):
     
     def test_serial_proxy_initialization(self):
         """Test SerialProxy basic initialization."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
         
@@ -767,6 +763,8 @@ class TestSerialProxy(TestCase):
         self.assertEqual(proxy.ser_fd, -1)
         self.assertEqual(proxy.pty_master, -1)
         self.assertFalse(proxy.running)
+        # state_table 在 start() 中创建
+        self.assertIsNone(proxy.state_table)
     
     def test_serial_proxy_calculate_filter_timeout(self):
         """Test filter timeout calculation based on baud rate."""
@@ -785,13 +783,10 @@ class TestSerialProxy(TestCase):
     
     def test_serial_proxy_stop_without_start(self):
         """Test SerialProxy.stop() is safe when not started."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
         
@@ -1101,13 +1096,10 @@ class TestSerialProxyRuntime(TestCase):
     
     def test_serial_proxy_create_symlink(self):
         """Test _create_symlink creates symbolic link."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/tmp/test-VC0-"
         )
         
@@ -1124,13 +1116,10 @@ class TestSerialProxyRuntime(TestCase):
     
     def test_serial_proxy_remove_symlink(self):
         """Test _remove_symlink removes symbolic link."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/tmp/test-VC0-"
         )
         
@@ -1151,11 +1140,12 @@ class TestSerialProxyRuntime(TestCase):
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
-        proxy._update_state("up")
+        proxy._update_state("Up")
         
         # Should call state_table.set
         state_table.set.assert_called_once()
@@ -1163,7 +1153,7 @@ class TestSerialProxyRuntime(TestCase):
         self.assertEqual(args[0][0], "1")  # link_id
         
         # State should be tracked
-        self.assertEqual(proxy._current_oper_state, "up")
+        self.assertEqual(proxy._current_oper_state, "Up")
     
     def test_serial_proxy_update_state_only_on_change(self):
         """Test _update_state only updates on state change."""
@@ -1173,20 +1163,21 @@ class TestSerialProxyRuntime(TestCase):
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
         # First update
-        proxy._update_state("up")
+        proxy._update_state("Up")
         self.assertEqual(state_table.set.call_count, 1)
         
         # Same state - should not update
-        proxy._update_state("up")
+        proxy._update_state("Up")
         self.assertEqual(state_table.set.call_count, 1)
         
         # Different state - should update
-        proxy._update_state("down")
+        proxy._update_state("Unknown")
         self.assertEqual(state_table.set.call_count, 2)
     
     def test_serial_proxy_cleanup_state(self):
@@ -1197,9 +1188,10 @@ class TestSerialProxyRuntime(TestCase):
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
         proxy._cleanup_state()
         
@@ -1214,26 +1206,24 @@ class TestSerialProxyRuntime(TestCase):
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
         frame = consoled.Frame.create_heartbeat(42)
         
         proxy._on_frame_received(frame)
         
-        # Should update state to "up"
-        self.assertEqual(proxy._current_oper_state, "up")
+        # Should update state to "Up"
+        self.assertEqual(proxy._current_oper_state, "Up")
     
     def test_serial_proxy_on_user_data_received(self):
         """Test _on_user_data_received writes to PTY."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
         
@@ -1252,9 +1242,10 @@ class TestSerialProxyRuntime(TestCase):
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
         # Simulate heartbeat timeout
         proxy._last_heartbeat_time = time.monotonic() - consoled.HEARTBEAT_TIMEOUT - 1
@@ -1262,8 +1253,8 @@ class TestSerialProxyRuntime(TestCase):
         
         proxy._check_heartbeat_timeout()
         
-        # Should set state to "down"
-        self.assertEqual(proxy._current_oper_state, "down")
+        # Should set state to "Unknown"
+        self.assertEqual(proxy._current_oper_state, "Unknown")
     
     def test_serial_proxy_check_heartbeat_timeout_with_data_activity(self):
         """Test _check_heartbeat_timeout resets with data activity."""
@@ -1273,9 +1264,10 @@ class TestSerialProxyRuntime(TestCase):
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
         # Heartbeat timed out but recent data activity
         proxy._last_heartbeat_time = time.monotonic() - consoled.HEARTBEAT_TIMEOUT - 1
@@ -1283,8 +1275,8 @@ class TestSerialProxyRuntime(TestCase):
         
         proxy._check_heartbeat_timeout()
         
-        # Should not set state to "down" because of data activity
-        self.assertNotEqual(proxy._current_oper_state, "down")
+        # Should not set state to "Unknown" because of data activity
+        self.assertNotEqual(proxy._current_oper_state, "Unknown")
     
     def test_serial_proxy_run_loop_processes_split_frame(self):
         """
@@ -1304,9 +1296,10 @@ class TestSerialProxyRuntime(TestCase):
             link_id="test",
             device="/dev/test",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
+        # 手动设置 state_table（模拟 start() 的行为）
+        proxy.state_table = state_table
         
         # Create pipes to simulate ser_fd, pty_master, and wake pipe
         ser_r, ser_w = os.pipe()  # Simulate serial port
@@ -1950,52 +1943,50 @@ class TestSerialProxyStart(TestCase):
     
     def test_serial_proxy_start_creates_pty(self):
         """Test start() creates PTY pair."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/C0-1",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
         
-        with mock.patch('os.openpty', return_value=(10, 11)) as mock_openpty:
-            with mock.patch('os.ttyname', return_value="/dev/pts/99"):
-                with mock.patch('os.open', return_value=12):
-                    with mock.patch('os.pipe', return_value=(20, 21)):
-                        with mock.patch.object(consoled, 'configure_serial'):
-                            with mock.patch.object(consoled, 'configure_pty'):
-                                with mock.patch.object(consoled, 'set_nonblocking'):
-                                    with mock.patch.object(proxy, '_create_symlink'):
-                                        with mock.patch('threading.Thread') as mock_thread:
-                                            mock_thread_instance = mock.Mock()
-                                            mock_thread.return_value = mock_thread_instance
-                                            
-                                            result = proxy.start()
-                                            
-                                            self.assertTrue(result)
-                                            mock_openpty.assert_called_once()
-                                            self.assertEqual(proxy.pty_master, 10)
-                                            self.assertEqual(proxy.pty_slave, 11)
+        with mock.patch.object(consoled, 'DBConnector', return_value=mock.Mock()):
+            with mock.patch.object(consoled, 'Table', return_value=mock.Mock()):
+                with mock.patch('os.openpty', return_value=(10, 11)) as mock_openpty:
+                    with mock.patch('os.ttyname', return_value="/dev/pts/99"):
+                        with mock.patch('os.open', return_value=12):
+                            with mock.patch('os.pipe', return_value=(20, 21)):
+                                with mock.patch.object(consoled, 'configure_serial'):
+                                    with mock.patch.object(consoled, 'configure_pty'):
+                                        with mock.patch.object(consoled, 'set_nonblocking'):
+                                            with mock.patch.object(proxy, '_create_symlink'):
+                                                with mock.patch('threading.Thread') as mock_thread:
+                                                    mock_thread_instance = mock.Mock()
+                                                    mock_thread.return_value = mock_thread_instance
+                                                    
+                                                    result = proxy.start()
+                                                    
+                                                    self.assertTrue(result)
+                                                    mock_openpty.assert_called_once()
+                                                    self.assertEqual(proxy.pty_master, 10)
+                                                    self.assertEqual(proxy.pty_slave, 11)
     
     def test_serial_proxy_start_failure_returns_false(self):
         """Test start() returns False on failure."""
-        state_table = mock.Mock()
-        
         proxy = consoled.SerialProxy(
             link_id="1",
             device="/dev/nonexistent",
             baud=9600,
-            state_table=state_table,
             pty_symlink_prefix="/dev/VC0-"
         )
         
-        with mock.patch('os.pipe', side_effect=OSError("Pipe failed")):
-            result = proxy.start()
-            
-            self.assertFalse(result)
-            self.assertFalse(proxy.running)
+        with mock.patch.object(consoled, 'DBConnector', return_value=mock.Mock()):
+            with mock.patch.object(consoled, 'Table', return_value=mock.Mock()):
+                with mock.patch('os.pipe', side_effect=OSError("Pipe failed")):
+                    result = proxy.start()
+                    
+                    self.assertFalse(result)
+                    self.assertFalse(proxy.running)
 
 
 # ============================================================
